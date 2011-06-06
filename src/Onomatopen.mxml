@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:WindowedApplication
+	xmlns:mx="http://www.adobe.com/2006/mxml"
+	layout="absolute"
+	applicationComplete="onApplicationComplete();"
+	close="onClose()"
+	xmlns:view="onomatopen.view.*"
+	width="800"
+	height="600"
+	backgroundColor="#000000"
+	frameRate="60">
+	<mx:Script>
+		<![CDATA[
+			import flash.filesystem.File;
+			import mx.events.SliderEvent;
+			import mx.events.ColorPickerEvent;
+			import mx.controls.ColorPicker;
+			import onomatopen.BrushChoicer;
+			import onomatopen.JulianSocketEvent;
+			import onomatopen.JulianSocket;
+			
+			private var julian:JulianSocket;
+			
+			private function onApplicationComplete():void {
+				// Julianサーバに接続
+				julian = new JulianSocket();
+				julian.addEventListener(Event.CONNECT, onJulianEvent);
+				julian.addEventListener(Event.CLOSE, onJulianEvent);
+				julian.addEventListener(SecurityErrorEvent.SECURITY_ERROR, onJulianEvent);
+				julian.addEventListener(IOErrorEvent.IO_ERROR, onJulianEvent);
+				julian.addEventListener("connecting", onJulianEvent);
+				julian.addEventListener("stop_challenge", onJulianEvent);
+				
+				var brushChoicer:BrushChoicer = new BrushChoicer(julian);
+				onoCanvas.brushChoicer = brushChoicer;
+				
+				julian.addEventListener(JulianSocketEvent.WORD, function(event:JulianSocketEvent):void {
+					if (status != event.word) {
+						status = event.word;
+					}
+					if (event.word == "peta") {
+						onoCanvas.paste();
+					}
+				});
+				/*
+				brushChoicer.addEventListener("change", function():void {
+					status = "Brush: "+brushChoicer.currentBrush;
+				});
+				brushChoicer.addEventListener("restart", function():void {
+					status = "Brush: normal";
+				});
+				*/
+				
+				// 背景色
+				var defaultBackgroundColor:uint = 0xFFFFEE;
+				this.bgColorPicker.selectedColor = defaultBackgroundColor;
+				this.setStyle("backgroundColor", defaultBackgroundColor);
+			}
+			
+			private function onColorChange(event:ColorPickerEvent):void {
+				this.setStyle("backgroundColor", ColorPicker(event.target).selectedColor);
+			}
+			
+			private function onButtonClear():void {
+				onoCanvas.clear();
+			}
+			
+			private function onButtonOpenImage():void {
+				var file:File = new File();
+				file.addEventListener(Event.SELECT, onFileSelected);
+				try {
+					file.browseForOpen(
+						"Select a background image",
+						[new FileFilter("Image", "*.jpg;*.jpeg;*.JPG;*.JPEG;*.png")]);
+				} catch(error:Error) {
+					trace(error.message);
+				}
+			}
+			private function onFileSelected(event:Event):void {
+				trace("onfile");
+				//this.onoCanvas.loadImage(File(event.target).nativePath);
+				this.onoCanvas.loadImage(File(event.target).url);
+			}
+			
+			private function onClose():void {
+				if (julian.connected) {
+					julian.close();
+				}
+			}
+			
+			private function onJulianEvent(event:Event):void {
+				this.status = event.type;
+			}
+			
+			private function onSliderChange(event:SliderEvent):void {
+				this.onoCanvas.biyoSize = event.value;
+			}
+		]]>
+	</mx:Script>
+	<view:OnoCanvas id="onoCanvas" x="0" y="0" />
+	<mx:HBox left="0" right="0" bottom="0" paddingTop="5" paddingBottom="5" paddingLeft="5" backgroundColor="#EEEEEE"
+		borderColor="#999999" borderStyle="solid" borderThickness="1">
+		<mx:Button label="Clear" click="onButtonClear()" />
+		<mx:ColorPicker id="bgColorPicker" change="onColorChange(event)" />
+		<mx:Button label="Image"  click="onButtonOpenImage()" />
+		<mx:Label text="BIYOON" />
+		<mx:HSlider id="biyoSize"
+			value="40"
+			width="100"
+			minimum="10" maximum="100"
+			snapInterval="2" tickInterval="10"
+			change="onSliderChange(event)" />
+	</mx:HBox>
+	
+</mx:WindowedApplication>

@@ -1,0 +1,435 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Canvas xmlns:mx="http://www.adobe.com/2006/mxml"
+	initialize="onInitialize()" xmlns:view="onomatopen.view.*"
+	backgroundColor="#000000"
+	backgroundAlpha="0"
+	width="100%"
+	height="100%">
+	<mx:Script>
+		<![CDATA[
+			import flash.utils.getTimer;
+			import onomatopen.painter.KopiPainter;
+			import mx.controls.Alert;
+			import onomatopen.painter.Painter;
+			import onomatopen.BrushChoicer;
+			import onomatopen.painter.ChokiPainter;
+			import onomatopen.painter.GizaPainter;
+			import onomatopen.painter.KakuPainter;
+			import onomatopen.painter.KeshiPainter;
+			import onomatopen.painter.KiraPainter;
+			import onomatopen.painter.MokoPainter;
+			import onomatopen.painter.NormalPainter;
+			import onomatopen.painter.Painter;
+			import onomatopen.painter.TenPainter;
+			import mx.core.UIComponent;
+			import mx.events.IndexChangedEvent;
+			
+			private var _brushChoicer:BrushChoicer;
+			private var dragging:Boolean = false;
+			private var points:Array = [];
+			private var beforeWordTime:uint;
+			
+			private var paintedBitmap:Bitmap;
+			private var currentPainter:Painter;
+			private var copiedBitmapData:BitmapData;
+			
+			// for displacement map filter
+			private var gradientCircle:BitmapData;
+			private var circleSize:Number = 40;
+			private var biyoMode:Boolean = false;
+			
+			private function onInitialize():void {
+				paintedBitmap = new Bitmap();
+				paintedBitmapContainer.addChild(paintedBitmap);
+				this.gradientCircle = createGradientCircle();
+				//this.paintedBitmapContainer.addChild(new Bitmap(gradientCircle));
+				
+				//this.addEventListener(Event.ADDED_TO_STAGE, function():void {
+					addEventListener(MouseEvent.MOUSE_DOWN, onMouseDown);
+					addEventListener(MouseEvent.MOUSE_MOVE, onMouseMove);
+					addEventListener(MouseEvent.MOUSE_UP, onMouseUp);
+				//});
+				addEventListener(Event.ENTER_FRAME, onEnterFrame);
+			}
+			
+			//
+			// brushChoicer
+			//
+			public function set brushChoicer(choicer:BrushChoicer):void {
+				_brushChoicer = choicer;
+				switchPainterTo(new NormalPainter());
+				choicer.addEventListener("change", onBrushChange);
+				choicer.addEventListener("word", function():void {
+					beforeWordTime = getTimer();
+				});
+			}
+			
+			public function clear():void {
+				//painted.graphics.clear();
+				paintedBitmap.bitmapData = null;
+			}
+			
+			//
+			// Image
+			//
+			public function loadImage(path:String):void {
+				trace(path);
+				var loader:Loader = new Loader();
+				loader.contentLoaderInfo.addEventListener(Event.COMPLETE, function():void {
+					blendBitmapDataToPainted(Bitmap(loader.content).bitmapData);
+				});
+				loader.contentLoaderInfo.addEventListener(IOErrorEvent.IO_ERROR, function():void {
+					trace("io error");
+				});
+				try {
+					loader.load(new URLRequest(path));
+				}catch(err:Error){
+					
+				}
+			}
+
+			//
+			// ブラシ変更イベント
+			//
+			private function onBrushChange(event:Event):void {
+				switch(_brushChoicer.currentBrush) {
+					case "kaku":
+						switchPainterTo(new KakuPainter(points));
+						break;
+					case "kira":
+						switchPainterTo(new KiraPainter(points));
+						break;
+					case "moko":
+						switchPainterTo(new MokoPainter(points));
+						break;
+					case "giza":
+						switchPainterTo(new GizaPainter(points));
+						break;
+					case "ten":
+						switchPainterTo(new TenPainter(points));
+						break;
+					case "keshi":
+						switchPainterTo(new KeshiPainter(points));
+						break;
+					case "choki":
+						switchPainterTo(new ChokiPainter(points));
+						break;
+					case "kopi":
+						switchPainterTo(new KopiPainter(points));
+						break;
+					case "peta":
+						switchPainterTo(new Painter(points)); // 何も描かない
+						break;
+					case "biyo":
+						switchPainterTo(new Painter(points)); // 何も描かない
+						break;
+					default:
+						switchPainterTo(new NormalPainter(points));
+						break;
+				}
+				
+				// BIYO
+				if (_brushChoicer.currentBrush == "biyo") {
+					if (!biyoMode) {
+						startBiyo();
+					}
+				} else {
+					biyoMode = false;
+				}
+				
+				// KESHI
+				if (_brushChoicer.currentBrush == "keshi") {
+					this.blendMode = BlendMode.LAYER;
+					currentPainter.blendMode = BlendMode.ERASE;
+				} else {
+					this.blendMode = BlendMode.NORMAL;
+					currentPainter.blendMode = BlendMode.NORMAL;
+				}
+			}
+			
+			//
+			// painter
+			//
+			private function switchPainterTo(newPainter:Painter):void {
+				beforeWordTime = getTimer();
+				removePainter();
+				currentPainter = newPainter;
+				addChild(currentPainter);
+			}
+			
+			private function removePainter():void {
+				if (currentPainter) {
+					removeChild(currentPainter);
+					currentPainter = null;
+				}
+			}
+			
+			//
+			// Mouse Event
+			//
+			private function onMouseDown(mouse:MouseEvent):void {
+				// 数秒以内に音声が入力されていればそのブラシのまま
+				if (getTimer() - beforeWordTime > 1000
+					|| !currentPainter
+					|| !beforeWordTime)
+				{
+					_brushChoicer.reset();
+					switchPainterTo(new NormalPainter());
+				}
+				//switchPainterTo(new ChokiPainter()); // ペンのテスト用
+				
+				points = [];
+				currentPainter.onMouseDown(
+					addPoint(mouse.localX, mouse.localY));
+				////biyoMode = false;
+				dragging = true;
+			}
+			
+			private function onMouseMove(mouse:MouseEvent):void {
+				if (!dragging) return;
+				currentPainter.onDrag(
+					addPoint(mouse.localX, mouse.localY));
+				////if (biyoMode) blendBiyo();
+			}
+			
+			private function onMouseUp(mouse:MouseEvent):void {
+				dragging = false;
+				currentPainter.onMouseUp(
+					addPoint(mouse.localX, mouse.localY));
+				
+				if (currentPainter is ChokiPainter) {
+					cut();
+				} else if (currentPainter is KopiPainter) {
+					copy();
+				} else {
+					blendPainterToPainted();
+				}
+				
+				// 線を消す
+				removePainter();
+				// リセット
+				points = [];
+				////_brushChoicer.reset();
+				////switchPainterTo(new NormalPainter());
+				biyoMode = false;
+			}
+			
+			//
+			// 通過点を記録しておく
+			//
+			private function addPoint(x:int, y:int):Point {
+				var p:Point = new Point(x, y);
+				this.points.push(p);
+				return p;
+			}
+			
+			//
+			// Cut / Copy
+			//
+			private function cut():void {
+				cutOrCopy(false);
+			}
+			private function copy():void {
+				cutOrCopy(true);
+			}
+			private function cutOrCopy(copyOnly:Boolean):void {
+				if (!this.paintedBitmap.bitmapData) return;
+				
+				var painterRect:Rectangle = this.currentPainter.getBounds(this);
+				// 既存の絵を矩形に切り抜き
+				var paintedBmd:BitmapData = new BitmapData(
+						painterRect.width,
+						painterRect.height,
+						true, 0);
+				paintedBmd.copyPixels(this.paintedBitmap.bitmapData,
+					painterRect,
+					new Point(0, 0));
+				
+				// 選択範囲部分のBitamapDataを矩形に切り抜き
+				var painterBmd:BitmapData = new BitmapData(
+						painterRect.width,
+						painterRect.height,
+						true, 0x0);
+				var mat:Matrix = new Matrix();
+				mat.translate(-painterRect.x, -painterRect.y);
+				painterBmd.draw(this.currentPainter,
+					mat, null, null,
+					new Rectangle(0, 0, painterRect.width, painterRect.height));
+				
+				// 選択範囲の透明pixelは 既存の絵のpixelも透明にする
+				paintedBmd.threshold(
+					painterBmd, // source: thresholdと比較するBitmapData
+					new Rectangle(0, 0, painterRect.width, painterRect.height),
+					new Point(0, 0),
+					"==",
+					0x00000000, // threshold
+					0x00FFFFFF, // to transparent (0x00000000)
+					0xFF000000, // mask
+					false);
+				
+				// クリップボードに保存
+				this.copiedBitmapData = paintedBmd;
+				
+				if (copyOnly) return;
+				
+				// さらに切り抜いて更新
+				var newPaintedBmd:BitmapData = this.paintedBitmap.bitmapData.clone();
+				newPaintedBmd.threshold(
+					painterBmd,
+					new Rectangle(0, 0, painterRect.width, painterRect.height),
+					painterRect.topLeft,
+					">",
+					0x01000000, // threshold
+					0x00FFFFFF, // change this color if true
+					0xFF000000,
+					false);
+				this.paintedBitmap.bitmapData = newPaintedBmd;
+			}
+			
+			//
+			// Paste
+			//
+			public function paste():void {
+				if (!dragging) return;
+				if (!copiedBitmapData) return;
+				
+				var rect:Rectangle = this.getBounds(this);
+				var w:Number = Math.max(stage.mouseX+copiedBitmapData.width, rect.right);
+				var h:Number = Math.max(stage.mouseY+copiedBitmapData.height, rect.bottom);
+				if (w > 2880 || h > 2880) {
+					trace("too large!");
+					return;
+				}
+				// 既存背景
+				var newBmd:BitmapData = new BitmapData(w, h, true, 0x00FFFFFF);
+				if (this.paintedBitmap.bitmapData) {
+					newBmd.copyPixels(this.paintedBitmap.bitmapData,
+						new Rectangle(0, 0,
+								this.paintedBitmap.bitmapData.width,
+								this.paintedBitmap.bitmapData.height),
+						new Point(0, 0));
+				}
+				// 合成
+				var bmp:Bitmap = new Bitmap(copiedBitmapData.clone());
+				var mat:Matrix = new Matrix();
+				mat.translate(
+					stage.mouseX - copiedBitmapData.width/2,
+					stage.mouseY - copiedBitmapData.height/2);
+				newBmd.draw(bmp, mat);
+				// 更新
+				this.paintedBitmap.bitmapData = newBmd;
+			}
+			
+			//
+			// Painted Layer
+			//
+			private function blendBitmapDataToPainted(bmd:BitmapData):void {
+				var rect:Rectangle = this.getBounds(this);
+				var w:Number = Math.max(bmd.width, rect.right);
+				var h:Number = Math.max(bmd.height, rect.bottom);
+				if (w > 2880 || h > 2880) {
+					Alert.show("The bitmap is too large!");
+					return;
+				}
+				
+				var newBmd:BitmapData = new BitmapData(w, h, true, 0x00FFFFFF);
+				newBmd.draw(this);
+				newBmd.draw(bmd);
+				this.paintedBitmap.bitmapData = newBmd;
+			}
+			
+			private function blendPainterToPainted():void {
+				var rect:Rectangle = this.getBounds(this);
+				if (!rect.right || !rect.bottom) return;
+				
+				var bmd:BitmapData = new BitmapData(rect.right, rect.bottom, true, 0x00FFFFFF);
+				bmd.draw(this);
+				this.paintedBitmap.bitmapData = bmd;
+			}
+			
+			//
+			// Biyo DisplacementMapFilter
+			//
+			private var prevMousePoint:Point;
+			private var currentMousePoint:Point;
+			private var beforeEffect:BitmapData;
+			
+			private function startBiyo():void {
+				//beforeEffect = this.paintedBitmap.bitmapData.clone();
+				prevMousePoint = new Point(this.mouseX, this.mouseY);
+				biyoMode = true;
+			}
+			
+			private function cancelBiyo():void {
+				
+			}
+			
+			private function stopBiyo():void {
+				biyoMode = false;
+			}
+			
+			private function onEnterFrame(event:Event):void {
+				if (!dragging || !biyoMode) return;
+				currentMousePoint = new Point(this.mouseX, this.mouseY);
+				blendBiyo();
+				prevMousePoint = currentMousePoint;
+			}
+			
+			private function blendBiyo():void {
+				if (!this.paintedBitmap.bitmapData) return;
+				var dst:BitmapData = new BitmapData(
+											this.paintedBitmap.bitmapData.width,
+											this.paintedBitmap.bitmapData.height,
+											true, 0);
+				var r:Number = this.circleSize/2;
+				var mapPoint:Point = new Point(currentMousePoint.x - r, currentMousePoint.y - r);
+				var mapFilter:DisplacementMapFilter = new DisplacementMapFilter(
+						this.gradientCircle,
+						mapPoint,
+						BitmapDataChannel.RED,
+						BitmapDataChannel.RED,
+						(prevMousePoint.x - currentMousePoint.x) * 2,
+						(prevMousePoint.y - currentMousePoint.y) * 2,
+						DisplacementMapFilterMode.CLAMP);
+				dst.applyFilter(
+						this.paintedBitmap.bitmapData,
+						this.paintedBitmap.bitmapData.rect,
+						new Point(0, 0),
+						mapFilter);
+						
+				this.paintedBitmap.bitmapData.draw(
+						dst, null, null, null,
+						new Rectangle(mapPoint.x, mapPoint.y, circleSize, circleSize));
+			}
+			
+			public function set biyoSize(value:uint):void {
+				this.circleSize = value;
+				this.gradientCircle = createGradientCircle();
+			}
+			
+			private function createGradientCircle():BitmapData {
+				var shape:Shape = new Shape();
+				var matrix:Matrix = new Matrix();
+				matrix.createGradientBox(circleSize, circleSize);
+				with (shape.graphics) {
+					beginGradientFill(
+						GradientType.RADIAL,
+						[0xFF0000, 0x000000],
+						[1, 0],
+						[50, 255],
+						matrix,
+						SpreadMethod.PAD,
+						InterpolationMethod.LINEAR_RGB);
+					drawCircle(circleSize/2, circleSize/2, circleSize/2);
+					endFill();
+				}
+				
+				var bmd:BitmapData = new BitmapData(circleSize, circleSize, false,
+													128 << 16 | 128 << 8 | 128);
+				bmd.draw(shape, null, null, BlendMode.OVERLAY);
+				return bmd;
+			}
+		]]>
+	</mx:Script>
+	<mx:UIComponent id="paintedBitmapContainer" />
+</mx:Canvas>
